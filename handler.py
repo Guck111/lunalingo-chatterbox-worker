@@ -4,7 +4,9 @@ import torchaudio as ta
 import base64
 import tempfile
 import os
+import io
 import requests
+from pydub import AudioSegment
 from chatterbox.tts import ChatterboxTTS
 
 model = ChatterboxTTS.from_pretrained(device="cuda")
@@ -34,9 +36,13 @@ def handler(event):
         cfg_weight=cfg_weight,
     )
 
-    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
-        ta.save(f.name, wav, model.sr)
-        audio_base64 = base64.b64encode(open(f.name, "rb").read()).decode()
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as wav_file:
+        ta.save(wav_file.name, wav, model.sr)
+        audio = AudioSegment.from_wav(wav_file.name)
+        mp3_buffer = io.BytesIO()
+        audio.export(mp3_buffer, format="mp3", bitrate="128k")
+        audio_base64 = base64.b64encode(mp3_buffer.getvalue()).decode()
+        os.unlink(wav_file.name)
 
     if audio_prompt_path:
         os.unlink(audio_prompt_path)
