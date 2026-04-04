@@ -41,22 +41,23 @@ class TTSRequest(BaseModel):
     reference_audio_url: Optional[str] = None
 
 
-@app.get("/health")
-def health():
-    return {"status": "ok"}
+class BatchTTSRequest(BaseModel):
+    requests: list[TTSRequest]
 
 
-@app.post("/generate")
-def generate(req: TTSRequest):
+def _generate_single(req: TTSRequest, ref_cache: dict[str, str]) -> str:
+    """Generate audio for one request. ref_cache maps URL → local file path."""
     if req.seed > 0:
         torch.manual_seed(req.seed)
 
     audio_prompt_path = None
     if req.reference_audio_url:
-        tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
-        tmp.write(requests.get(req.reference_audio_url).content)
-        tmp.close()
-        audio_prompt_path = tmp.name
+        if req.reference_audio_url not in ref_cache:
+            tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+            tmp.write(requests.get(req.reference_audio_url).content)
+            tmp.close()
+            ref_cache[req.reference_audio_url] = tmp.name
+        audio_prompt_path = ref_cache[req.reference_audio_url]
 
     chunks = chunk_text(req.text)
     combined = AudioSegment.empty()
@@ -74,11 +75,48 @@ def generate(req: TTSRequest):
             os.unlink(wav_file.name)
         combined += segment
 
-    if audio_prompt_path:
-        os.unlink(audio_prompt_path)
-
     mp3_buffer = io.BytesIO()
     combined.export(mp3_buffer, format="mp3", bitrate="128k")
-    audio_base64 = base64.b64encode(mp3_buffer.getvalue()).decode()
+    return base64.b64encode(mp3_buffer.getvalue()).decode()
 
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+
+
+@app.post("/generate")
+def generate(req: TTSRequest):
+    ref_cache: dict[str, str] = {}
+    try:
+        audio_base64 = _generate_single(req, ref_cache)
+    finally:
+        for path in ref_cache.values():
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
     return {"audio_base64": audio_base64}
+
+
+@app.post("/batch")
+def batch_generate(req: BatchTTSRequest):
+    """Process multiple TTS requests sequentially on one GPU.
+    Reference audio is downloaded once and reused across all items."""
+    if not req.requests:
+        return {"results": []}
+
+    ref_cache: dict[str, str] = {}
+    results = []
+    try:
+        for item in req.requests:
+            audio_base64 = _generate_single(item, ref_cache)
+            results.append({"audio_base64": audio_base64})
+    finally:
+        for path in ref_cache.values():
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+
+    return {"results": results}
