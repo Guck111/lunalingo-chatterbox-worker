@@ -1,3 +1,9 @@
+import os
+
+# Redirect HuggingFace model cache to RunPod volume so weights are downloaded
+# only on the first start and reused on subsequent restarts.
+os.environ["HF_HOME"] = "/runpod-volume/hf_cache"
+
 import re
 import json
 import queue
@@ -6,7 +12,6 @@ import torch
 import torchaudio as ta
 import base64
 import tempfile
-import os
 import io
 import requests
 from fastapi import FastAPI
