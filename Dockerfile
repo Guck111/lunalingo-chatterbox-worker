@@ -1,9 +1,13 @@
-FROM runpod/base:0.6.2-cuda12.1.0
+FROM nvidia/cuda:12.1.0-cudnn8-runtime-ubuntu22.04
 
-RUN apt-get update && apt-get install -y ffmpeg && rm -rf /var/lib/apt/lists/*
+ENV DEBIAN_FRONTEND=noninteractive
 
-RUN python3 -m pip install chatterbox-tts runpod requests torchaudio pydub
+RUN apt-get update && apt-get install -y \
+    python3 python3-pip ffmpeg git \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN pip3 install chatterbox-tts fastapi uvicorn requests torchaudio pydub
 
 COPY handler.py .
 
-CMD ["python3", "-u", "handler.py"]
+CMD ["uvicorn", "handler:app", "--host", "0.0.0.0", "--port", "8080"]
