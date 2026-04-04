@@ -1,4 +1,5 @@
 import re
+import json
 import torch
 import torchaudio as ta
 import base64
@@ -7,6 +8,7 @@ import os
 import io
 import requests
 from fastapi import FastAPI
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import Optional
 from pydub import AudioSegment
@@ -102,21 +104,22 @@ def generate(req: TTSRequest):
 @app.post("/batch")
 def batch_generate(req: BatchTTSRequest):
     """Process multiple TTS requests sequentially on one GPU.
-    Reference audio is downloaded once and reused across all items."""
+    Streams NDJSON — one JSON line per completed item — so the connection
+    stays alive and the client receives results as they are ready."""
     if not req.requests:
         return {"results": []}
 
-    ref_cache: dict[str, str] = {}
-    results = []
-    try:
-        for item in req.requests:
-            audio_base64 = _generate_single(item, ref_cache)
-            results.append({"audio_base64": audio_base64})
-    finally:
-        for path in ref_cache.values():
-            try:
-                os.unlink(path)
-            except OSError:
-                pass
+    def stream():
+        ref_cache: dict[str, str] = {}
+        try:
+            for item in req.requests:
+                audio_base64 = _generate_single(item, ref_cache)
+                yield json.dumps({"audio_base64": audio_base64}) + "\n"
+        finally:
+            for path in ref_cache.values():
+                try:
+                    os.unlink(path)
+                except OSError:
+                    pass
 
-    return {"results": results}
+    return StreamingResponse(stream(), media_type="application/x-ndjson")
